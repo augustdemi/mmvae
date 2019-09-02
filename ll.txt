@@ -1,0 +1,17 @@
+18:same as 19. but rec_loss is in solver.py
+19:works for mnist. rec_loss is called from loss.py
+20:For svhn. Laplace loss. loss  = loss*3
+21:same as 20 but loss = loss
+22:same as 21 but one more FC layer
+23:svhn tc works
+24:correct reconstruction, svhn capacity=[0.0, 10.0, 100000, 100.0]
+25:svhn capacity=[0.0, 10.0, 25000, 100.0]
+26:svhn capacity=[0.0, 10.0, 100000, 100.0], less Fc layer
+27:same as 26 but default capacity
+28:no kl loss
+33:modalA&B final check before applying TC loss
+
+
+solver_c: categorical prob. with discriminator for TC
+solver_tc_works: all conti. variables with discriminotor for TC
+solver: For TC, use problistic model instead of discriminator(make it better with 'if else' compared to solver41)

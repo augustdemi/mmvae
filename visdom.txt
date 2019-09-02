@@ -1,0 +1,3 @@
+Checking for scripts.
+It's Alive!
+You can navigate to http://localhost:8002
