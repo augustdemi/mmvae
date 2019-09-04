@@ -36,7 +36,7 @@ def normal_init(m):
 
 ###############################################################################
 
-class Net(nn.Module):
+class NetFmnist(nn.Module):
     """Parametrizes q(z|x).
 
     @param n_latents: integer
@@ -44,7 +44,7 @@ class Net(nn.Module):
     """
 
     def __init__(self, num_classes=10, channel=1):
-        super(Net, self).__init__()
+        super(NetFmnist, self).__init__()
         self.num_classes = num_classes
 
         self.features = nn.Sequential(
@@ -85,7 +85,7 @@ class Net(nn.Module):
 
 
 
-class NetMnist(nn.Module):
+class Net(nn.Module):
     """Parametrizes q(z|x).
 
     @param n_latents: integer
@@ -93,7 +93,7 @@ class NetMnist(nn.Module):
     """
 
     def __init__(self, num_classes=10, channel=1):
-        super(NetMnist, self).__init__()
+        super(Net, self).__init__()
         self.num_classes = num_classes
 
         self.features = nn.Sequential(
@@ -145,7 +145,7 @@ def train(args, model, device, train_loader, optimizer, epoch):
                 epoch, batch_idx * len(data), len(train_loader.dataset),
                 100. * batch_idx / len(train_loader), loss.item()))
 
-def test(args, model, device, test_loader):
+def test(model, device, test_loader):
     model.eval()
     test_loss = 0
     correct = 0
@@ -162,14 +162,11 @@ def test(args, model, device, test_loader):
     print('\nTest set: Average loss: {:.4f}, Accuracy: {}/{} ({:.0f}%)\n'.format(
         test_loss, correct, len(test_loader.dataset),
         100. * correct / len(test_loader.dataset)))
-
-
-
-def main():
+def create_parser():
     parser = argparse.ArgumentParser()
 
     # Training settings
-    parser.add_argument('--dataset', type=str, default='mnist', help='dataset name')
+    parser.add_argument('--dataset', type=str, default='fmnist', help='dataset name')
     parser.add_argument('--batch_size', type=int, default=64, metavar='N',
                         help='input batch size for training (default: 64)')
     parser.add_argument('--test_batch_size', type=int, default=1000, metavar='N',
@@ -192,8 +189,10 @@ def main():
     parser.add_argument('--test_only', action='store_true', default=False,
                         help='only test not train')
 
+    return parser
 
-    args = parser.parse_args()
+
+def main(args):
     use_cuda = not args.no_cuda and torch.cuda.is_available()
 
     torch.manual_seed(args.seed)
@@ -227,24 +226,25 @@ def main():
         dset_te,
         batch_size=args.test_batch_size, shuffle=True, **kwargs)
 
-
-
-
     model = Net().to(device)
-    optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum)
-
     if args.test_only:
-        model = torch.load(args.dataset + "_cnn.pt", map_location='cpu')
-        test(args, model, device, train_loader)
-        test(args, model, device, test_loader)
+        model.load_state_dict(torch.load(args.dataset + "_cnn_dict.pt"))
+        # model = torch.load(args.dataset + "_cnn2.pt", map_location='cpu')
+        test(model, device, train_loader)
+        test(model, device, test_loader)
     else:
+        optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum)
         for epoch in range(1, args.epochs +1):
             train(args, model, device, train_loader, optimizer, epoch)
-            test(args, model, device, test_loader)
+            test(model, device, test_loader)
         if (args.save_model):
-            torch.save(model, args.dataset + "_cnn2.pt")
-            # torch.save(model.state_dict(), "mnist_cnn.pt")
+            # torch.save(model, args.dataset + "_cnn2.pt")
+            torch.save(model.state_dict(), args.dataset + "_cnn_dict.pt")
 
 
 if __name__ == "__main__":
-    main()
+    parser = create_parser()
+    args = parser.parse_args()
+    # print_opts(args)
+
+    main(args)
