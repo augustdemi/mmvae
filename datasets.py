@@ -56,7 +56,7 @@ class DIGIT(Dataset):
         #                  ])
         self.train = train  # training set or test set
 
-        self.input_a, self.input_b = make_dataset_fixed(self.train)
+        self.input_a, self.input_b, self.label = make_dataset_fixed(self.train)
         len(self.input_a)
 
     def __getitem__(self, index):
@@ -67,7 +67,7 @@ class DIGIT(Dataset):
             tuple: (image, target) where target is index of the target class.
         """
 
-        a_img, b_img = self.input_a[index], self.input_b[index]
+        a_img, b_img, label = self.input_a[index], self.input_b[index], self.label[index]
 
         a_img = transform(a_img, resize=32)
 
@@ -77,7 +77,7 @@ class DIGIT(Dataset):
         # svhn_img = Image.fromarray(svhn_img, mode='RGB')
         # svhn_img = self.transformB(svhn_img)
 
-        return a_img, b_img, index
+        return a_img, b_img, label, index
 
     def __len__(self):
         # return self.input_a.size(0)
@@ -156,19 +156,20 @@ def match_label(mnist, svhn):
     for i in range(len(svhn['labels'])):
         b_imgs[svhn['labels'][i]].append(svhn['imgs'][i])
 
-    x_img, y_img = [], []
+    x_img, y_img, labels = [], [], []
     for i in range(10):
         min_len = min(len(a_imgs[i]), len(b_imgs[i]))
         print('label {} len {}'.format(i, min_len))
         x_img.extend(a_imgs[i][:min_len])
         y_img.extend(b_imgs[i][:min_len])
+        labels.extend([i] * min_len)
 
     # for i in range(10):
     #     print('i = {} : len of inputA={}, len of inputB={}'.format(i, len(a_imgs[i]), len(b_imgs[i])))
     #     a_imgs[i] = np.array(a_imgs[i])
     #     b_imgs[i] = np.array(b_imgs[i])
 
-    return x_img, y_img
+    return x_img, y_img, labels
 
 
 def make_dataset_fixed(train):
@@ -177,11 +178,11 @@ def make_dataset_fixed(train):
     trainB, testB = load_fashionMNIST()
 
     if train:
-        input_a, input_b = match_label(trainA, trainB)
+        input_a, input_b, labels = match_label(trainA, trainB)
     else:
-        input_a, input_b = match_label(testA, testB)
+        input_a, input_b, labels = match_label(testA, testB)
 
-    return input_a, input_b
+    return input_a, input_b, labels
 
 
 if __name__ == "__main__":
