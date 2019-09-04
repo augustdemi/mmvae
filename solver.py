@@ -10,6 +10,7 @@ from torchvision.utils import save_image
 
 # -----------------------------------------------------------------------------#
 
+from classifier import Net
 from utils import DataGather, mkdirs, grid2gif2, apply_poe, sample_gaussian, sample_gumbel_softmax, \
     get_log_pz_qz_prodzi_qzCx
 from model import *
@@ -198,14 +199,13 @@ class Solver(object):
                 print('==== epoch %d done ====' % epoch)
                 epoch += 1
                 iterator1 = iter(self.data_loader)
-                iterator2 = iter(self.data_loader)
 
             # ============================================
             #          TRAIN THE VAE (ENC & DEC)
             # ============================================
 
             # sample a mini-batch
-            XA, XB, index = next(iterator1)  # (n x C x H x W)
+            XA, XB, label, index = next(iterator1)  # (n x C x H x W)
 
             index = index.cpu().detach().numpy()
             if self.use_cuda:
@@ -433,16 +433,16 @@ class Solver(object):
                 # self.save_embedding(iteration, index, muA_infA, muB_infB, muS_infA, muS_infB, muS_POE)
 
                 # 1) save the recon images
-                self.save_recon(iteration)
+                # self.save_recon(iteration)
 
 
                 z_A, z_B, z_S = self.get_stat()
 
-                if self.dataset == 'modalA':
-                    self.save_traverseA(iteration, z_A, z_B, z_S)
-                elif self.dataset == 'modalB':
-                    self.save_traverseB(iteration, z_A, z_B, z_S)
-
+                # if self.dataset == 'modalA':
+                #     self.save_traverseA(iteration, z_A, z_B, z_S)
+                # elif self.dataset == 'modalB':
+                #     self.save_traverseB(iteration, z_A, z_B, z_S)
+            self.save_synth_cross_modal(iteration, z_A, z_B, train=True, howmany=3)
 
 
             if iteration % self.eval_metrics_iter == 0:
@@ -737,6 +737,35 @@ class Solver(object):
 
         return metric2, C
 
+
+    def check_acc(self, data, target, train=True):
+        device = torch.device("cuda" if self.use_cuda else "cpu")
+        model = Net().to(device)
+        model.load_state_dict(torch.load("mnist_cnn_dict.pt"))
+
+        model.eval()
+
+
+        test_loss = 0
+        correct = 0
+        with torch.no_grad():
+            output = model(data)
+            test_loss += F.nll_loss(output, target, reduction='sum').item()  # sum up batch loss
+            pred = output.argmax(dim=1, keepdim=True)  # get the index of the max log-probability
+            correct += pred.eq(target.view_as(pred)).sum().item()
+
+        test_loss /= len(target)
+
+        if train:
+            dataset = 'Train'
+        else:
+            dataset = 'Test'
+        print('\n{} set: Average loss: {:.4f}, Accuracy: {}/{} ({:.0f}%)\n'.format(dataset,
+            test_loss, correct, len(target),
+            100. * correct / len(target)))
+        print('=======================================')
+
+
     def save_recon(self, iters):
         self.set_mode(train=False)
 
@@ -751,17 +780,20 @@ class Solver(object):
 
         XA = [0] * len(fixed_idxs60)
         XB = [0] * len(fixed_idxs60)
+        label = [0] * len(fixed_idxs60)
 
         for i, idx in enumerate(fixed_idxs60):
-            XA[i], XB[i] = \
-                self.data_loader.dataset.__getitem__(idx)[0:2]
+            XA[i], XB[i], label[i] = \
+                self.data_loader.dataset.__getitem__(idx)[0:3]
 
             if self.use_cuda:
                 XA[i] = XA[i].cuda()
                 XB[i] = XB[i].cuda()
+                label[i] = label[i].cuda()
 
         XA = torch.stack(XA)
         XB = torch.stack(XB)
+        label = torch.LongTensor(label)
 
         muA_infA, stdA_infA, logvarA_infA, cate_prob_infA = self.encoderA(XA)
 
@@ -787,6 +819,13 @@ class Solver(object):
         # reconstructed samples (given single modal observation)
         XA_infA_recon = torch.sigmoid(self.decoderA(ZA_infA, ZS_infA))
         XB_infB_recon = torch.sigmoid(self.decoderB(ZB_infB, ZS_infB))
+
+
+        print('=========== save_rec ACC ============')
+        self.check_acc(XA, label)
+
+        #######################
+
 
         WS = torch.ones(XA.shape)
         if self.use_cuda:
@@ -888,11 +927,12 @@ class Solver(object):
 
         fixed_XA = [0] * len(fixed_idxs)
         fixed_XB = [0] * len(fixed_idxs)
+        label = [0] * len(fixed_idxs)
 
         for i, idx in enumerate(fixed_idxs):
 
-            fixed_XA[i], fixed_XB[i] = \
-                data_loader.dataset.__getitem__(idx)[0:2]
+            fixed_XA[i], fixed_XB[i], label[i] = \
+                data_loader.dataset.__getitem__(idx)[0:3]
 
             if self.use_cuda:
                 fixed_XA[i] = fixed_XA[i].cuda()
@@ -925,7 +965,7 @@ class Solver(object):
 
         fixed_XA_3ch = torch.stack(fixed_XA_3ch)
 
-        WS = torch.ones(fixed_XA_3ch.shape)
+        WS = torch.ones(fixed_XA.shape)
         if self.use_cuda:
             WS = WS.cuda()
 
@@ -936,7 +976,10 @@ class Solver(object):
 
         ######## 1) generate xB from given xA (A2B) ########
 
-        merged = torch.cat([fixed_XA_3ch], dim=0)
+        merged = torch.cat([fixed_XA], dim=0)
+        # merged = torch.cat([fixed_XA_3ch], dim=0)
+        XB_synth_list = []
+        label_list = []
         for k in range(howmany):
             # z_B_stat = np.array(z_B_stat)
             # z_B_stat_mean = np.mean(z_B_stat, 0)
@@ -954,10 +997,18 @@ class Solver(object):
             if self.use_cuda:
                 ZB = ZB.cuda()
             XB_synth = torch.sigmoid(decoderB(ZB, ZS_infA))  # given XA
+            XB_synth_list.extend(XB_synth)
+            label_list.extend(label)
             # merged = torch.cat([merged, fixed_XA_3ch], dim=0)
             merged = torch.cat([merged, XB_synth], dim=0)
         merged = torch.cat([merged, WS], dim=0)
         merged = merged[perm, :].cpu()
+
+        print('=========== cross-synth ACC ============')
+        XB_synth_list = torch.stack(XB_synth_list)
+        label_list = torch.LongTensor(label_list)
+        self.check_acc(XB_synth_list, label_list)
+
 
         # save the results as image
         if train:
