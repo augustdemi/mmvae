@@ -396,14 +396,17 @@ class Solver(object):
 
                 # 1) save the recon images
                 self.save_recon(iteration)
+                self.save_recon(iteration, train=False)
 
 
                 z_A, z_B, z_S = self.get_stat()
 
                 if self.dataset == 'modalA':
                     self.save_traverseA(iteration, z_A, z_B, z_S)
+                    self.save_traverseA(iteration, z_A, z_B, z_S, train=False)
                 elif self.dataset == 'modalB':
                     self.save_traverseB(iteration, z_A, z_B, z_S)
+                    self.save_traverseB(iteration, z_A, z_B, z_S, train=False)
             # self.save_synth_cross_modal(iteration, z_A, z_B, train=True, howmany=3)
 
 
@@ -1096,7 +1099,7 @@ class Solver(object):
         return z_A, z_B, z_S
 
 
-    def save_traverseA(self, iters, z_A, z_B, z_S, loc=-1):
+    def save_traverseA(self, iters, z_A, z_B, z_S, loc=-1, train=True):
 
         self.set_mode(train=False)
 
@@ -1110,9 +1113,16 @@ class Solver(object):
         print('interpolationB: ', np.min(np.array(z_B)), np.max(np.array(z_B)))
         print('interpolationS: ', np.min(np.array(z_S)), np.max(np.array(z_S)))
 
-        if self.record_file:
-            ####
+        if train:
+            data_loader = self.data_loader
             fixed_idxs = [3246, 7001, 14308, 19000, 27447, 33103, 38002, 45232, 51000, 55125]
+            out_dir = os.path.join(self.output_dir_trvsl, str(iters), 'train')
+        else:
+            data_loader = self.test_data_loader
+            fixed_idxs = [2, 982, 2300, 3400, 4500, 5500, 6500, 7500, 8500, 9500]
+            out_dir = os.path.join(self.output_dir_trvsl, str(iters), 'test')
+
+        if self.record_file:
 
             fixed_XA = [0] * len(fixed_idxs)
             fixed_XB = [0] * len(fixed_idxs)
@@ -1120,7 +1130,7 @@ class Solver(object):
             for i, idx in enumerate(fixed_idxs):
 
                 fixed_XA[i], fixed_XB[i] = \
-                    self.data_loader.dataset.__getitem__(idx)[0:2]
+                    data_loader.dataset.__getitem__(idx)[0:2]
                 if self.use_cuda:
                     fixed_XA[i] = fixed_XA[i].cuda()
                     fixed_XB[i] = fixed_XB[i].cuda()
@@ -1183,8 +1193,7 @@ class Solver(object):
 
 
         # save the generated files, also the animated gifs
-        out_dir = os.path.join(self.output_dir_trvsl, str(iters), 'train')
-        mkdirs(self.output_dir_trvsl)
+
         mkdirs(out_dir)
 
         for j, val in enumerate(interpolationA):
@@ -1205,7 +1214,7 @@ class Solver(object):
 
 
     ###
-    def save_traverseB(self, iters, z_A, z_B, z_S, loc=-1):
+    def save_traverseB(self, iters, z_A, z_B, z_S, loc=-1, train=True):
 
         self.set_mode(train=False)
 
@@ -1219,9 +1228,16 @@ class Solver(object):
         print('interpolationB: ', np.min(np.array(z_B)), np.max(np.array(z_B)))
         print('interpolationS: ', np.min(np.array(z_S)), np.max(np.array(z_S)))
 
-        if self.record_file:
-            ####
+        if train:
+            data_loader = self.data_loader
             fixed_idxs = [3246, 7001, 14308, 19000, 27447, 33103, 38002, 45232, 51000, 55125]
+            out_dir = os.path.join(self.output_dir_trvsl, str(iters), 'train')
+        else:
+            data_loader = self.test_data_loader
+            fixed_idxs = [2, 982, 2300, 3400, 4500, 5500, 6500, 7500, 8500, 9500]
+            out_dir = os.path.join(self.output_dir_trvsl, str(iters), 'test')
+
+        if self.record_file:
 
             fixed_XA = [0] * len(fixed_idxs)
             fixed_XB = [0] * len(fixed_idxs)
@@ -1229,7 +1245,7 @@ class Solver(object):
             for i, idx in enumerate(fixed_idxs):
 
                 fixed_XA[i], fixed_XB[i] = \
-                    self.data_loader.dataset.__getitem__(idx)[0:2]
+                    data_loader.dataset.__getitem__(idx)[0:2]
                 if self.use_cuda:
                     fixed_XA[i] = fixed_XA[i].cuda()
                     fixed_XB[i] = fixed_XB[i].cuda()
@@ -1293,8 +1309,6 @@ class Solver(object):
 
 
         # save the generated files, also the animated gifs
-        out_dir = os.path.join(self.output_dir_trvsl, str(iters), 'train')
-        mkdirs(self.output_dir_trvsl)
         mkdirs(out_dir)
 
         for j, val in enumerate(interpolationA):
