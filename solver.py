@@ -789,7 +789,6 @@ class Solver(object):
             if self.use_cuda:
                 XA[i] = XA[i].cuda()
                 XB[i] = XB[i].cuda()
-                label[i] = label[i].cuda()
 
         XA = torch.stack(XA)
         XB = torch.stack(XB)
