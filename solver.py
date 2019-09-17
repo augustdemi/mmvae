@@ -433,16 +433,16 @@ class Solver(object):
                 # self.save_embedding(iteration, index, muA_infA, muB_infB, muS_infA, muS_infB, muS_POE)
 
                 # 1) save the recon images
-                # self.save_recon(iteration)
+                self.save_recon(iteration)
 
 
                 z_A, z_B, z_S = self.get_stat()
 
-                # if self.dataset == 'modalA':
-                #     self.save_traverseA(iteration, z_A, z_B, z_S)
-                # elif self.dataset == 'modalB':
-                #     self.save_traverseB(iteration, z_A, z_B, z_S)
-            self.save_synth_cross_modal(iteration, z_A, z_B, train=True, howmany=3)
+                if self.dataset == 'modalA':
+                    self.save_traverseA(iteration, z_A, z_B, z_S)
+                elif self.dataset == 'modalB':
+                    self.save_traverseB(iteration, z_A, z_B, z_S)
+            # self.save_synth_cross_modal(iteration, z_A, z_B, train=True, howmany=3)
 
 
             if iteration % self.eval_metrics_iter == 0:
