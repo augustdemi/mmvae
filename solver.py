@@ -247,7 +247,7 @@ class Solver(object):
             ZB_infB = sample_gaussian(self.use_cuda, muB_infB, stdB_infB)
             Eps = 1e-12
             relaxedCategA = ExpRelaxedCategorical(torch.tensor(.67), logits=torch.log(cate_prob_infA + Eps))
-            relaxedCategB = ExpRelaxedCategorical(torch.tensor(.67), logits=torch.log(cate_prob_infA + Eps))
+            relaxedCategB = ExpRelaxedCategorical(torch.tensor(.67), logits=torch.log(cate_prob_infB + Eps))
 
 
 
@@ -299,7 +299,7 @@ class Solver(object):
 
 
 
-            #==================================TC========================================
+            #================================== decomposed KL ========================================
 
             if self.dataset == 'modalA':
                 ZP = ZA_infA
@@ -330,56 +330,18 @@ class Solver(object):
 
             # ================================================================
             # miA_loss = (log_q_zACx).mean()
-            miA_loss = (log_q_zCx - log_qz).mean()
+            mi_loss = (log_q_zCx - log_qz).mean()
 
             # TC[z] = KL[q(z)||\prod_i z_i]
-            tcA_loss = (log_qz - log_prod_qzi).sum(dim=0).div(XA.size(0))
+            tc_loss = (log_qz - log_prod_qzi).sum(dim=0).div(XA.size(0))
 
             # dw_kl_loss is KL[q(z)||p(z)] instead of usual KL[q(z|x)||p(z))]
-            dw_klA_loss = (log_prod_qzi - log_pz).mean()
-            #================================================================
-            # anneal_reg = (linear_annealing(0, 1, self.n_train_steps, self.steps_anneal)
-            #               if is_train else 1)
-
-
-            # log_prob_ZS_infA = relaxedCategA.log_prob(ZS_infA)
-            # log_prob_ZS_infB = relaxedCategB.log_prob(ZS_infB)
-
-
-
-
-            # log_pzS, log_qzS, log_prod_qzSi, log_q_zSCx = get_log_pz_qz_prodzi_qzCx(ZS, cate_dist,
-            #                           len(self.data_loader.dataset), cont_dist=False,
-            #                           is_mss=self.is_mss)
+            dw_kl_loss = (log_prod_qzi - log_pz).mean()
 
             log_pzS, log_qzS, log_prod_qzSi, log_q_zSCx = torch.zeros(1).sum(0), torch.zeros(1).sum(0),torch.zeros(1).sum(0), torch.zeros(1).sum(0)
 
             miS_loss = (log_q_zSCx - log_qzS).mean()
             dw_klS_loss = (log_prod_qzSi - log_pzS).mean()
-
-
-            # total loss
-            mi_loss = miA_loss
-            tc_loss = tcA_loss
-            dw_kl_loss = dw_klA_loss
-
-
-            # modified_elbo = logpx - \
-            #                 (logqz_condx - logqz) - \
-            #                 self.beta * (logqz - logqz_prodmarginals) - \
-            #                 (1 - self.lamb) * (logqz_prodmarginals - logpz)
-            #
-            # anneal_reg = (linear_annealing(0, 1, self.n_train_steps, self.steps_anneal)
-            #               if is_train else 1)
-            #
-            # # total loss
-            # loss = rec_loss + (self.alpha * mi_loss +
-            #                    self.beta * tc_loss +
-            #                    anneal_reg * self.gamma * dw_kl_loss)
-
-            #============================================================================
-
-
 
 
             ################## total loss for vae ####################
