@@ -737,15 +737,15 @@ class Solver(object):
 
         return metric2, C
 
-
-    def check_acc(self, data, target, train=True):
+    def check_acc(self, data, target, dataset='mnist', train=True):
         device = torch.device("cuda" if self.use_cuda else "cpu")
+        if self.use_cuda:
+            target = target.cuda()
         model = Net().to(device)
-        model.load_state_dict(torch.load("mnist_cnn_dict.pt"))
+        print('loaded: ', dataset + "_cnn_dict.pt")
+        model.load_state_dict(torch.load(dataset + "_cnn_dict.pt"))
 
         model.eval()
-
-
         test_loss = 0
         correct = 0
         with torch.no_grad():
@@ -757,21 +757,43 @@ class Solver(object):
         test_loss /= len(target)
 
         if train:
-            dataset = 'Train'
+            print('\n{} set: Average loss: {:.4f}, Accuracy: {}/{} ({:.0f}%)\n'.format('Train',
+                                                                                       test_loss, correct, len(target),
+                                                                                       100. * correct / len(target)))
         else:
-            dataset = 'Test'
-        print('\n{} set: Average loss: {:.4f}, Accuracy: {}/{} ({:.0f}%)\n'.format(dataset,
-            test_loss, correct, len(target),
-            100. * correct / len(target)))
-        print('=======================================')
+            print('\n{} set: Average loss: {:.4f}, Accuracy: {}/{} ({:.0f}%)\n'.format('Test',
+                                                                                       test_loss, correct, len(target),
+                                                                                       100. * correct / len(target)))
+
+        pred = pred.resize(pred.size()[0])
+        paired = torch.stack((target, pred), dim=1)
+
+        temp = {}
+        for i in range(10):
+            temp.update({i: []})
+        for i in range(int(paired.size()[0])):
+            temp[int(paired[i][0])].append(paired[i])
+
+        for i in range(10):
+            one_paired = torch.stack(temp[i])
+            one_target = one_paired[:,0]
+            one_pred = one_paired[:,1]
+            corr = one_pred.eq(one_target.view_as(one_pred)).sum().item()
+            print('ACC of digit {}: {:.2f}'.format(i, corr / len(temp[i])) )
+        print('-------------------------------------------------')
+        return correct / len(target)
 
 
-    def save_recon(self, iters):
+    def save_recon(self, iters, train=True):
         self.set_mode(train=False)
 
-        mkdirs(self.output_dir_recon)
-
-        fixed_idxs = [3246, 7000, 14305, 19000, 27444, 33100, 38000, 45231, 51000, 55121]
+        if train:
+            data_loader = self.data_loader
+            fixed_idxs = [3246, 7001, 14308, 19000, 27447, 33103, 38002, 45232, 51000, 55125]
+        else:
+            data_loader = self.test_data_loader
+            fixed_idxs = [2, 982, 2300, 3400, 4500, 5500, 6500, 7500, 8500, 9500]
+            self.output_dir_recon = os.path.join(self.output_dir_recon, 'test')
 
         fixed_idxs60 = []
         for idx in fixed_idxs:
@@ -784,7 +806,7 @@ class Solver(object):
 
         for i, idx in enumerate(fixed_idxs60):
             XA[i], XB[i], label[i] = \
-                self.data_loader.dataset.__getitem__(idx)[0:3]
+                data_loader.dataset.__getitem__(idx)[0:3]
 
             if self.use_cuda:
                 XA[i] = XA[i].cuda()
@@ -819,9 +841,20 @@ class Solver(object):
         XA_infA_recon = torch.sigmoid(self.decoderA(ZA_infA, ZS_infA))
         XB_infB_recon = torch.sigmoid(self.decoderB(ZB_infB, ZS_infB))
 
+        print('=========== Reconstructed ACC  ============')
+        if self.dataset == 'modalA':
+            print('PoeA')
+            poeA_acc = self.check_acc(XA_POE_recon, label, train=train)
+            print('InfA')
+            infA_acc = self.check_acc(XA_infA_recon, label, train=train)
+        elif self.dataset == 'modalB':
+            print('PoeB')
+            poeB_acc = self.check_acc(XB_POE_recon, label, dataset='fmnist', train=train)
+            print('InfB')
+            infB_acc = self.check_acc(XB_infB_recon, label, dataset='fmnist', train=train)
 
-        print('=========== save_rec ACC ============')
-        self.check_acc(XA, label)
+
+
 
         #######################
 
