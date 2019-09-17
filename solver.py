@@ -1112,7 +1112,7 @@ class Solver(object):
 
         if self.record_file:
             ####
-            fixed_idxs = [3246, 7000, 14305, 19000, 27444, 33100, 38000, 45231, 51000, 55121]
+            fixed_idxs = [3246, 7001, 14308, 19000, 27447, 33103, 38002, 45232, 51000, 55125]
 
             fixed_XA = [0] * len(fixed_idxs)
             fixed_XB = [0] * len(fixed_idxs)
@@ -1221,7 +1221,7 @@ class Solver(object):
 
         if self.record_file:
             ####
-            fixed_idxs = [3246, 7000, 14305, 19000, 27444, 33100, 38000, 45231, 51000, 55121]
+            fixed_idxs = [3246, 7001, 14308, 19000, 27447, 33103, 38002, 45232, 51000, 55125]
 
             fixed_XA = [0] * len(fixed_idxs)
             fixed_XB = [0] * len(fixed_idxs)
