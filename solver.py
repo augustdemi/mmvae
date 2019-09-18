@@ -79,8 +79,7 @@ class Solver(object):
                 'kl_A', 'kl_B',
                 'cont_capacity_loss_infA', 'disc_capacity_loss_infA', 'cont_capacity_loss_infB', 'disc_capacity_loss_infB',
                 'tc_loss', 'mi_loss', 'dw_kl_loss', 'miS_loss', 'dw_klS_loss',
-                'poeA_acc', 'infA_acc',
-                'poeB_acc', 'infB_acc'
+                'poe_acc', 'inf_acc'
             )
 
             # if self.eval_metrics:
@@ -420,10 +419,10 @@ class Solver(object):
                 z_A, z_B, z_S = self.get_stat()
 
                 print(">>>>>> Train ACC")
-                (poeA_acc, poeB_acc, infA_acc, infB_acc) = self.acc_total(z_A, z_B, train=True, howmany=3)
+                (poe_acc, inf_acc) = self.acc_total(z_A, z_B, train=True, howmany=3)
 
                 print(">>>>>> Test ACC")
-                (poeA_acc, poeB_acc, infA_acc, infB_acc) = self.acc_total(z_A, z_B, train=False, howmany=3)
+                (poe_acc, inf_acc) = self.acc_total(z_A, z_B, train=False, howmany=3)
 
                 self.line_gather.insert(iter=iteration,
                                         recon_both=loss_recon_POE.item(),
@@ -440,10 +439,8 @@ class Solver(object):
                                         dw_kl_loss = dw_kl_loss.item(),
                                         miS_loss=miS_loss.item(),
                                         dw_klS_loss=dw_klS_loss.item(),
-                                        poeA_acc=poeA_acc,
-                                        poeB_acc=poeB_acc,
-                                        infA_acc=infA_acc,
-                                        infB_acc=infB_acc
+                                        poe_acc=poe_acc,
+                                        inf_acc=inf_acc
                                         )
 
             # (visdom) visualize line stats (then flush out)
@@ -1396,17 +1393,17 @@ class Solver(object):
         print('=========== Reconstructed ACC  ============')
         if self.dataset == 'modalA':
             print('PoeA')
-            poeA_acc = self.check_acc(XA_POE_recon, label, train=train)
+            poe_acc = self.check_acc(XA_POE_recon, label, train=train)
             print('InfA')
-            infA_acc = self.check_acc(XA_infA_recon, label, train=train)
+            inf_acc = self.check_acc(XA_infA_recon, label, train=train)
         elif self.dataset == 'modalB':
             print('PoeB')
-            poeB_acc = self.check_acc(XB_POE_recon, label, dataset='fmnist', train=train)
+            poe_acc = self.check_acc(XB_POE_recon, label, dataset='fmnist', train=train)
             print('InfB')
-            infB_acc = self.check_acc(XB_infB_recon, label, dataset='fmnist', train=train)
+            inf_acc = self.check_acc(XB_infB_recon, label, dataset='fmnist', train=train)
 
         self.set_mode(train=True)
-        return (poeA_acc, poeB_acc, infA_acc, infB_acc)
+        return (poe_acc, inf_acc)
 
     ####
     def viz_init(self):
@@ -1445,10 +1442,8 @@ class Solver(object):
         miS_loss =  torch.Tensor(data['miS_loss'])
         dw_klS_loss =  torch.Tensor(data['dw_klS_loss'])
 
-        poeA_acc = torch.Tensor(data['poeA_acc'])
-        infA_acc = torch.Tensor(data['infA_acc'])
-        poeB_acc = torch.Tensor(data['poeB_acc'])
-        infB_acc = torch.Tensor(data['infB_acc'])
+        poe_acc = torch.Tensor(data['poe_acc'])
+        inf_acc = torch.Tensor(data['inf_acc'])
 
 
         recons = torch.stack(
@@ -1475,7 +1470,7 @@ class Solver(object):
         )
 
         acc = torch.stack(
-            [poeA_acc.detach(), infA_acc.detach(), synA_acc.detach(), poeB_acc.detach(), infB_acc.detach(), synB_acc.detach()], -1
+            [poe_acc.detach(), inf_acc.detach()], -1
         )
 
 
@@ -1525,7 +1520,7 @@ class Solver(object):
             X=iters, Y=acc, env=self.name + '/lines',
             win=self.win_id['acc'], update='append',
             opts=dict(xlabel='iter', ylabel='accuracy',
-            title = 'Classification Acc', legend = ['poeA_acc', 'infA_acc', 'synA_acc', 'poeB_acc', 'infB_acc', 'synB_acc']),
+            title = 'Classification Acc', legend = ['poe_acc', 'inf_acc']),
         )
 
     ####
