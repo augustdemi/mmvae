@@ -36,54 +36,26 @@ def normal_init(m):
 
 ###############################################################################
 
-class NetFmnist(nn.Module):
-    """Parametrizes q(z|x).
-
-    @param n_latents: integer
-                      number of latent dimensions
-    """
-
-    def __init__(self, num_classes=10, channel=1):
-        super(NetFmnist, self).__init__()
-        self.num_classes = num_classes
-
-        self.features = nn.Sequential(
-            nn.Conv2d(channel, 32, 4, 2, 1),
-            nn.ReLU(),
-            nn.Conv2d(32, 32, 4, 2, 1),
-            nn.ReLU(),
-            nn.Conv2d(32, 64, 4, 2, 1),
-            nn.ReLU(),
-            nn.Conv2d(64, 64, 4, 2, 1),
-            nn.ReLU())
-
-
-        # self.fc4 = nn.Linear(64*4*4, 256)
-        self.fc4 = nn.Linear(256, 256)
-        self.fc5 = nn.Linear(256, num_classes)
-
-        self.weight_init()
-
-    ####
-    def weight_init(self, mode='normal'):
-
-        if mode == 'kaiming':
-            initializer = kaiming_init
-        elif mode == 'normal':
-            initializer = normal_init
-
-        for m in self._modules:
-            initializer(self._modules[m])
+class FNet(nn.Module):
+    def __init__(self):
+        super().__init__()
+        # Defining the layers, 128, 64, 10 units each
+        self.fc1 = nn.Linear(784, 128)
+        self.fc2 = nn.Linear(128, 64)
+        # Output layer, 10 units - one for each digit
+        self.fc3 = nn.Linear(64, 10)
 
     def forward(self, x):
-        out = self.features(x)
-        out = out.view(out.size(0), -1)
-        out = F.relu(self.fc4(out))
-        out = self.fc5(out)
+        ''' Forward pass through the network, returns the output logits '''
+        x = torch.flatten(x, start_dim=1)
+        x = self.fc1(x)
+        x = F.relu(x)
+        x = self.fc2(x)
+        x = F.relu(x)
+        x = self.fc3(x)
+        x = F.softmax(x, dim=1)
 
-        return F.log_softmax(out, dim=1)
-
-
+        return x
 
 class Net(nn.Module):
     """Parametrizes q(z|x).
@@ -166,7 +138,7 @@ def create_parser():
     parser = argparse.ArgumentParser()
 
     # Training settings
-    parser.add_argument('--dataset', type=str, default='fmnist', help='dataset name')
+    parser.add_argument('--dataset', type=str, default='mnist', help='dataset name')
     parser.add_argument('--batch_size', type=int, default=64, metavar='N',
                         help='input batch size for training (default: 64)')
     parser.add_argument('--test_batch_size', type=int, default=1000, metavar='N',
@@ -186,7 +158,7 @@ def create_parser():
 
     parser.add_argument('--save_model', action='store_true', default=True,
                         help='For Saving the current Model')
-    parser.add_argument('--test_only', action='store_true', default=False,
+    parser.add_argument('--test_only', action='store_true', default=True,
                         help='only test not train')
 
     return parser
@@ -202,20 +174,27 @@ def main(args):
     kwargs = {'num_workers': 1, 'pin_memory': True} if use_cuda else {}
 
     transformer = transforms.Compose([
-                           transforms.Resize(32),
-                           transforms.ToTensor(),
-                           transforms.Normalize((0.1307,), (0.3081,))
-                       ])
+        transforms.Resize(32),
+        transforms.ToTensor(),
+        # transforms.Normalize((0.1307,), (0.3081,))
+    ])
 
     ### choose dataset
     if args.dataset == 'mnist':
+
         dset_tr = datasets.MNIST('../data/mnist', train=True, download=True,
                        transform=transformer)
         dset_te = datasets.MNIST('../data/mnist', train=False, transform=transformer)
+        model = Net().to(device)
     elif args.dataset == 'fmnist':
+        # transformer = transforms.Compose([
+        #     transforms.Resize(28),
+        #     transforms.ToTensor()
+        # ])
         dset_tr = datasets.FashionMNIST(root='../data/fMNIST', train=True, download=True,
                        transform=transformer)
         dset_te = datasets.FashionMNIST(root='../data/fMNIST', train=False, transform=transformer)
+        model = Net().to(device)
     else:
         raise exec('dataset should be mnist or fmnist')
 
@@ -226,7 +205,6 @@ def main(args):
         dset_te,
         batch_size=args.test_batch_size, shuffle=True, **kwargs)
 
-    model = Net().to(device)
     if args.test_only:
         model.load_state_dict(torch.load(args.dataset + "_cnn_dict.pt"))
         # model = torch.load(args.dataset + "_cnn2.pt", map_location='cpu')
