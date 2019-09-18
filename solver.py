@@ -769,7 +769,7 @@ class Solver(object):
         else:
             data_loader = self.test_data_loader
             fixed_idxs = [2, 982, 2300, 3400, 4500, 5500, 6500, 7500, 8500, 9500]
-            self.output_dir_recon = os.path.join(self.output_dir_recon, 'test')
+            out_dir = os.path.join(self.output_dir_recon, 'test')
 
         fixed_idxs60 = []
         for idx in fixed_idxs:
@@ -839,8 +839,8 @@ class Solver(object):
         merged = merged[perm, :].cpu()
 
         # save the results as image
-        fname = os.path.join(self.output_dir_recon, 'reconA_%s.jpg' % iters)
-        mkdirs(self.output_dir_recon)
+        fname = os.path.join(out_dir, 'reconA_%s.jpg' % iters)
+        mkdirs(out_dir)
         save_image(
             tensor=merged, filename=fname, nrow=4 * int(np.sqrt(n)),
             pad_value=1
