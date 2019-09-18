@@ -1,22 +1,21 @@
 import os
 import numpy as np
+import matplotlib.pyplot as plt
+from torchvision import transforms
 
 import torch.optim as optim
 from datasets import DIGIT
 from torch.utils.data import DataLoader
 from torchvision.utils import save_image
-import matplotlib.pyplot as plt
-from torchvision import transforms
-# -----------------------------------------------------------------------------#
-from classifier import Net
 
+# -----------------------------------------------------------------------------#
+
+from classifier import Net
 from utils import DataGather, mkdirs, grid2gif2, apply_poe, sample_gaussian, sample_gumbel_softmax, \
-    kl_multiple_discrete_loss
+    get_log_pz_qz_prodzi_qzCx
 from model import *
 from loss import kl_loss_function, reconstruction_loss
-import json
-from dataset import create_dataloader
-
+from torch.distributions.relaxed_categorical import ExpRelaxedCategorical
 
 ###############################################################################
 
@@ -73,12 +72,13 @@ class Solver(object):
         self.viz_on = args.viz_on
         if self.viz_on:
             self.win_id = dict(
-                recon='win_recon', kl='win_kl', capa='win_capa', acc='win_acc'
+                recon='win_recon', kl='win_kl', capa='win_capa', tc='win_tc', mi='win_mi', dw_kl='win_dw_kl', acc='win_acc'
             )
             self.line_gather = DataGather(
                 'iter', 'recon_both', 'recon_A', 'recon_B',
                 'kl_A', 'kl_B',
                 'cont_capacity_loss_infA', 'disc_capacity_loss_infA', 'cont_capacity_loss_infB', 'disc_capacity_loss_infB',
+                'tc_loss', 'mi_loss', 'dw_kl_loss', 'miS_loss', 'dw_klS_loss',
                 'poe_acc', 'inf_acc'
             )
 
@@ -184,11 +184,14 @@ class Solver(object):
 
         # iterators from dataloader
         iterator1 = iter(self.data_loader)
+        iterator2 = iter(self.data_loader)
 
-        iter_per_epoch = len(iterator1)
+        iter_per_epoch = min(len(iterator1), len(iterator2))
 
         start_iter = self.ckpt_load_iter + 1
         epoch = int(start_iter / iter_per_epoch)
+
+
 
         for iteration in range(start_iter, self.max_iter + 1):
 
@@ -197,6 +200,7 @@ class Solver(object):
                 print('==== epoch %d done ====' % epoch)
                 epoch += 1
                 iterator1 = iter(self.data_loader)
+
             # ============================================
             #          TRAIN THE VAE (ENC & DEC)
             # ============================================
@@ -242,11 +246,29 @@ class Solver(object):
             # encoder samples (for training)
             ZA_infA = sample_gaussian(self.use_cuda, muA_infA, stdA_infA)
             ZB_infB = sample_gaussian(self.use_cuda, muB_infB, stdB_infB)
-            ZS_POE = sample_gumbel_softmax(self.use_cuda, cate_prob_POE)
+            Eps = 1e-12
+            relaxedCategA = ExpRelaxedCategorical(torch.tensor(.67), logits=torch.log(cate_prob_infA + Eps))
+            relaxedCategB = ExpRelaxedCategorical(torch.tensor(.67), logits=torch.log(cate_prob_infB + Eps))
+
+
+
 
             # encoder samples (for cross-modal prediction)
-            ZS_infA = sample_gumbel_softmax(self.use_cuda, cate_prob_infA)
-            ZS_infB = sample_gumbel_softmax(self.use_cuda, cate_prob_infB)
+            # ZS_infA = sample_gumbel_softmax(self.use_cuda, cate_prob_infA)
+            # ZS_infB = sample_gumbel_softmax(self.use_cuda, cate_prob_infB)
+
+
+            log_ZS_infA = relaxedCategA.rsample()
+            ZS_infA = torch.exp(log_ZS_infA)
+
+            log_ZS_infB = relaxedCategB.rsample()
+            ZS_infB = torch.exp(log_ZS_infB)
+
+            ZS_POE = sample_gumbel_softmax(self.use_cuda, cate_prob_POE)
+
+
+            #### For all cate_prob_infA(statiscts), total 64, get log_prob_ZS_infB2 for each of ZS_infB2(sample) ==> 64*64. marig. out for q_z for MI
+
 
             # reconstructed samples (given joint modal observation)
             XA_POE_recon = self.decoderA(ZA_infA, ZS_POE)
@@ -276,8 +298,59 @@ class Solver(object):
                 assert self.dataset not in ('modalA', 'modalB')
                 raise ValueError("Unkown dataset: {}".format(self.dataset))
 
-            # total loss for vae
-            vae_loss = loss_recon + loss_capa
+
+
+            #================================== decomposed KL ========================================
+
+            if self.dataset == 'modalA':
+                ZP = ZA_infA
+                ZS = ZS_infA
+                cont_dist = (muA_infA, logvarA_infA)
+                cate_dist = relaxedCategA
+            elif self.dataset == 'modalB':
+                ZP = ZB_infB
+                ZS = ZS_infB
+                cont_dist = (muB_infB, logvarB_infB)
+                cate_dist = relaxedCategB
+            else:
+                assert self.dataset not in ('modalA', 'modalB')
+                raise ValueError("Unkown dataset: {}".format(self.dataset))
+
+
+            latent_sample = {'cont': ZP, 'disc': ZS}
+            latent_dist = {'cont': cont_dist, 'disc': cate_dist}
+
+            log_pz, log_qz, log_prod_qzi, log_q_zCx = get_log_pz_qz_prodzi_qzCx(latent_sample, latent_dist,
+                                                                                  len(self.data_loader.dataset),
+                                                                                  self.use_cuda,
+                                                                                  is_mss=self.is_mss, )
+            # a = ZA.min()
+            # b = log_qzA.min()
+            # c = log_prod_qzAi.min()
+            # d = muA_infA.min()
+
+            # ================================================================
+            # miA_loss = (log_q_zACx).mean()
+            mi_loss = (log_q_zCx - log_qz).mean()
+
+            # TC[z] = KL[q(z)||\prod_i z_i]
+            tc_loss = (log_qz - log_prod_qzi).sum(dim=0).div(XA.size(0))
+
+            # dw_kl_loss is KL[q(z)||p(z)] instead of usual KL[q(z|x)||p(z))]
+            dw_kl_loss = (log_prod_qzi - log_pz).mean()
+
+            log_pzS, log_qzS, log_prod_qzSi, log_q_zSCx = torch.zeros(1).sum(0), torch.zeros(1).sum(0),torch.zeros(1).sum(0), torch.zeros(1).sum(0)
+
+            miS_loss = (log_q_zSCx - log_qzS).mean()
+            dw_klS_loss = (log_prod_qzSi - log_pzS).mean()
+
+
+            ################## total loss for vae ####################
+            # vae_loss = loss_recon + loss_capa
+            vae_loss = loss_recon + (self.beta1 * mi_loss +
+                                     self.beta2 * tc_loss +
+                                     self.beta3 * dw_kl_loss)
+
 
             # update vae
             self.optim_vae.zero_grad()
@@ -294,7 +367,10 @@ class Solver(object):
                                       '    rec_infA = %.3f, rec_infB = %.3f, rec_POE = %.3f\n' + \
                                       '    kl_infA = %.3f, kl_infB = %.3f' + \
                                       '    cont_capacity_loss_infA = %.3f, disc_capacity_loss_infA = %.3f\n' + \
-                                      '    cont_capacity_loss_infB = %.3f, disc_capacity_loss_infB = %.3f\n'
+                                      '    cont_capacity_loss_infB = %.3f, disc_capacity_loss_infB = %.3f\n' + \
+                                      '    tc_loss = %.3f, mi_loss = %.3f, dw_kl_loss = %.3f\n' + \
+                                      '    miS_loss = %.3f, dw_klS_loss =%.3f'
+
                           ) % \
                           (iteration, epoch,
                            vae_loss.item(), loss_recon.item(), loss_capa.item(),
@@ -302,6 +378,8 @@ class Solver(object):
                            loss_kl_infA.item(), loss_kl_infB.item(),
                            cont_capacity_loss_infA.item(), disc_capacity_loss_infA.item(),
                            cont_capacity_loss_infB.item(), disc_capacity_loss_infB.item(),
+                           tc_loss.item(), mi_loss.item(), dw_kl_loss.item(),
+                           miS_loss.item(), dw_klS_loss.item()
                            )
                 print(prn_str)
                 if self.record_file:
@@ -319,15 +397,18 @@ class Solver(object):
 
                 # 1) save the recon images
                 self.save_recon(iteration)
+                self.save_recon(iteration, train=False)
 
 
                 z_A, z_B, z_S = self.get_stat()
 
                 if self.dataset == 'modalA':
                     self.save_traverseA(iteration, z_A, z_B, z_S)
+                    self.save_traverseA(iteration, z_A, z_B, z_S, train=False)
                 elif self.dataset == 'modalB':
                     self.save_traverseB(iteration, z_A, z_B, z_S)
-
+                    self.save_traverseB(iteration, z_A, z_B, z_S, train=False)
+            # self.save_synth_cross_modal(iteration, z_A, z_B, train=True, howmany=3)
 
 
             if iteration % self.eval_metrics_iter == 0:
@@ -335,6 +416,7 @@ class Solver(object):
 
             # (visdom) insert current line stats
             if self.viz_on and (iteration % self.viz_ll_iter == 0):
+
                 print(">>>>>> Train ACC")
                 (_, _) = self.acc_total(True)
 
@@ -351,6 +433,11 @@ class Solver(object):
                                         disc_capacity_loss_infA=disc_capacity_loss_infA.item(),
                                         cont_capacity_loss_infB=cont_capacity_loss_infB.item(),
                                         disc_capacity_loss_infB=disc_capacity_loss_infB.item(),
+                                        tc_loss = tc_loss.item(),
+                                        mi_loss = mi_loss.item(),
+                                        dw_kl_loss = dw_kl_loss.item(),
+                                        miS_loss=miS_loss.item(),
+                                        dw_klS_loss=dw_klS_loss.item(),
                                         poe_acc=poe_acc,
                                         inf_acc=inf_acc
                                         )
@@ -664,19 +751,24 @@ class Solver(object):
 
         for i in range(10):
             one_paired = torch.stack(temp[i])
-            one_target = one_paired[:, 0]
-            one_pred = one_paired[:, 1]
+            one_target = one_paired[:,0]
+            one_pred = one_paired[:,1]
             corr = one_pred.eq(one_target.view_as(one_pred)).sum().item()
-            print('ACC of digit {}: {:.2f}'.format(i, corr / len(temp[i])))
+            print('ACC of digit {}: {:.2f}'.format(i, corr / len(temp[i])) )
         print('-------------------------------------------------')
         return correct / len(target)
 
-    def save_recon(self, iters):
+
+    def save_recon(self, iters, train=True):
         self.set_mode(train=False)
 
-        mkdirs(self.output_dir_recon)
-
-        fixed_idxs = [3246, 7000, 14305, 19000, 27444, 33100, 38000, 45231, 51000, 55121]
+        if train:
+            data_loader = self.data_loader
+            fixed_idxs = [3246, 7001, 14308, 19000, 27447, 33103, 38002, 45232, 51000, 55125]
+        else:
+            data_loader = self.test_data_loader
+            fixed_idxs = [2, 982, 2300, 3400, 4500, 5500, 6500, 7500, 8500, 9500]
+            out_dir = os.path.join(self.output_dir_recon, 'test')
 
         fixed_idxs60 = []
         for idx in fixed_idxs:
@@ -685,10 +777,11 @@ class Solver(object):
 
         XA = [0] * len(fixed_idxs60)
         XB = [0] * len(fixed_idxs60)
+        label = [0] * len(fixed_idxs60)
 
         for i, idx in enumerate(fixed_idxs60):
-            XA[i], XB[i] = \
-                self.data_loader.dataset.__getitem__(idx)[0:2]
+            XA[i], XB[i], label[i] = \
+                data_loader.dataset.__getitem__(idx)[0:3]
 
             if self.use_cuda:
                 XA[i] = XA[i].cuda()
@@ -696,6 +789,7 @@ class Solver(object):
 
         XA = torch.stack(XA)
         XB = torch.stack(XB)
+        label = torch.LongTensor(label)
 
         muA_infA, stdA_infA, logvarA_infA, cate_prob_infA = self.encoderA(XA)
 
@@ -722,6 +816,9 @@ class Solver(object):
         XA_infA_recon = torch.sigmoid(self.decoderA(ZA_infA, ZS_infA))
         XB_infB_recon = torch.sigmoid(self.decoderB(ZB_infB, ZS_infB))
 
+        #######################
+
+
         WS = torch.ones(XA.shape)
         if self.use_cuda:
             WS = WS.cuda()
@@ -741,8 +838,8 @@ class Solver(object):
         merged = merged[perm, :].cpu()
 
         # save the results as image
-        fname = os.path.join(self.output_dir_recon, 'reconA_%s.jpg' % iters)
-        mkdirs(self.output_dir_recon)
+        fname = os.path.join(out_dir, 'reconA_%s.jpg' % iters)
+        mkdirs(out_dir)
         save_image(
             tensor=merged, filename=fname, nrow=4 * int(np.sqrt(n)),
             pad_value=1
@@ -822,11 +919,12 @@ class Solver(object):
 
         fixed_XA = [0] * len(fixed_idxs)
         fixed_XB = [0] * len(fixed_idxs)
+        label = [0] * len(fixed_idxs)
 
         for i, idx in enumerate(fixed_idxs):
 
-            fixed_XA[i], fixed_XB[i] = \
-                data_loader.dataset.__getitem__(idx)[0:2]
+            fixed_XA[i], fixed_XB[i], label[i] = \
+                data_loader.dataset.__getitem__(idx)[0:3]
 
             if self.use_cuda:
                 fixed_XA[i] = fixed_XA[i].cuda()
@@ -859,7 +957,7 @@ class Solver(object):
 
         fixed_XA_3ch = torch.stack(fixed_XA_3ch)
 
-        WS = torch.ones(fixed_XA_3ch.shape)
+        WS = torch.ones(fixed_XA.shape)
         if self.use_cuda:
             WS = WS.cuda()
 
@@ -870,7 +968,10 @@ class Solver(object):
 
         ######## 1) generate xB from given xA (A2B) ########
 
-        merged = torch.cat([fixed_XA_3ch], dim=0)
+        merged = torch.cat([fixed_XA], dim=0)
+        # merged = torch.cat([fixed_XA_3ch], dim=0)
+        XB_synth_list = []
+        label_list = []
         for k in range(howmany):
             # z_B_stat = np.array(z_B_stat)
             # z_B_stat_mean = np.mean(z_B_stat, 0)
@@ -888,10 +989,18 @@ class Solver(object):
             if self.use_cuda:
                 ZB = ZB.cuda()
             XB_synth = torch.sigmoid(decoderB(ZB, ZS_infA))  # given XA
+            XB_synth_list.extend(XB_synth)
+            label_list.extend(label)
             # merged = torch.cat([merged, fixed_XA_3ch], dim=0)
             merged = torch.cat([merged, XB_synth], dim=0)
         merged = torch.cat([merged, WS], dim=0)
         merged = merged[perm, :].cpu()
+
+        print('=========== cross-synth ACC ============')
+        XB_synth_list = torch.stack(XB_synth_list)
+        label_list = torch.LongTensor(label_list)
+        self.check_acc(XB_synth_list, label_list)
+
 
         # save the results as image
         if train:
@@ -985,7 +1094,7 @@ class Solver(object):
         return z_A, z_B, z_S
 
 
-    def save_traverseA(self, iters, z_A, z_B, z_S, loc=-1):
+    def save_traverseA(self, iters, z_A, z_B, z_S, loc=-1, train=True):
 
         self.set_mode(train=False)
 
@@ -999,9 +1108,16 @@ class Solver(object):
         print('interpolationB: ', np.min(np.array(z_B)), np.max(np.array(z_B)))
         print('interpolationS: ', np.min(np.array(z_S)), np.max(np.array(z_S)))
 
+        if train:
+            data_loader = self.data_loader
+            fixed_idxs = [3246, 7001, 14308, 19000, 27447, 33103, 38002, 45232, 51000, 55125]
+            out_dir = os.path.join(self.output_dir_trvsl, str(iters), 'train')
+        else:
+            data_loader = self.test_data_loader
+            fixed_idxs = [2, 982, 2300, 3400, 4500, 5500, 6500, 7500, 8500, 9500]
+            out_dir = os.path.join(self.output_dir_trvsl, str(iters), 'test')
+
         if self.record_file:
-            ####
-            fixed_idxs = [3246, 7000, 14305, 19000, 27444, 33100, 38000, 45231, 51000, 55121]
 
             fixed_XA = [0] * len(fixed_idxs)
             fixed_XB = [0] * len(fixed_idxs)
@@ -1009,7 +1125,7 @@ class Solver(object):
             for i, idx in enumerate(fixed_idxs):
 
                 fixed_XA[i], fixed_XB[i] = \
-                    self.data_loader.dataset.__getitem__(idx)[0:2]
+                    data_loader.dataset.__getitem__(idx)[0:2]
                 if self.use_cuda:
                     fixed_XA[i] = fixed_XA[i].cuda()
                     fixed_XB[i] = fixed_XB[i].cuda()
@@ -1072,8 +1188,7 @@ class Solver(object):
 
 
         # save the generated files, also the animated gifs
-        out_dir = os.path.join(self.output_dir_trvsl, str(iters), 'train')
-        mkdirs(self.output_dir_trvsl)
+
         mkdirs(out_dir)
 
         for j, val in enumerate(interpolationA):
@@ -1094,7 +1209,7 @@ class Solver(object):
 
 
     ###
-    def save_traverseB(self, iters, z_A, z_B, z_S, loc=-1):
+    def save_traverseB(self, iters, z_A, z_B, z_S, loc=-1, train=True):
 
         self.set_mode(train=False)
 
@@ -1108,9 +1223,16 @@ class Solver(object):
         print('interpolationB: ', np.min(np.array(z_B)), np.max(np.array(z_B)))
         print('interpolationS: ', np.min(np.array(z_S)), np.max(np.array(z_S)))
 
+        if train:
+            data_loader = self.data_loader
+            fixed_idxs = [3246, 7001, 14308, 19000, 27447, 33103, 38002, 45232, 51000, 55125]
+            out_dir = os.path.join(self.output_dir_trvsl, str(iters), 'train')
+        else:
+            data_loader = self.test_data_loader
+            fixed_idxs = [2, 982, 2300, 3400, 4500, 5500, 6500, 7500, 8500, 9500]
+            out_dir = os.path.join(self.output_dir_trvsl, str(iters), 'test')
+
         if self.record_file:
-            ####
-            fixed_idxs = [3246, 7000, 14305, 19000, 27444, 33100, 38000, 45231, 51000, 55121]
 
             fixed_XA = [0] * len(fixed_idxs)
             fixed_XB = [0] * len(fixed_idxs)
@@ -1118,7 +1240,7 @@ class Solver(object):
             for i, idx in enumerate(fixed_idxs):
 
                 fixed_XA[i], fixed_XB[i] = \
-                    self.data_loader.dataset.__getitem__(idx)[0:2]
+                    data_loader.dataset.__getitem__(idx)[0:2]
                 if self.use_cuda:
                     fixed_XA[i] = fixed_XA[i].cuda()
                     fixed_XB[i] = fixed_XB[i].cuda()
@@ -1182,8 +1304,6 @@ class Solver(object):
 
 
         # save the generated files, also the animated gifs
-        out_dir = os.path.join(self.output_dir_trvsl, str(iters), 'train')
-        mkdirs(self.output_dir_trvsl)
         mkdirs(out_dir)
 
         for j, val in enumerate(interpolationA):
@@ -1201,7 +1321,8 @@ class Solver(object):
 
         self.set_mode(train=True)
 
-    ####
+
+
     def acc_total(self, train):
 
         self.set_mode(train=False)
@@ -1283,12 +1404,15 @@ class Solver(object):
         self.set_mode(train=True)
         return (poe_acc, inf_acc)
 
-
+    ####
     def viz_init(self):
 
         self.viz.close(env=self.name + '/lines', win=self.win_id['recon'])
         self.viz.close(env=self.name + '/lines', win=self.win_id['kl'])
         self.viz.close(env=self.name + '/lines', win=self.win_id['capa'])
+        self.viz.close(env=self.name + '/lines', win=self.win_id['tc'])
+        self.viz.close(env=self.name + '/lines', win=self.win_id['mi'])
+        self.viz.close(env=self.name + '/lines', win=self.win_id['dw_kl'])
         self.viz.close(env=self.name + '/lines', win=self.win_id['acc'])
 
         # if self.eval_metrics:
@@ -1311,8 +1435,15 @@ class Solver(object):
         cont_capacity_loss_infB = torch.Tensor(data['cont_capacity_loss_infB'])
         disc_capacity_loss_infB = torch.Tensor(data['disc_capacity_loss_infB'])
 
+        tc_loss = torch.Tensor(data['tc_loss'])
+        mi_loss =  torch.Tensor(data['mi_loss'])
+        dw_kl_loss =  torch.Tensor(data['dw_kl_loss'])
+        miS_loss =  torch.Tensor(data['miS_loss'])
+        dw_klS_loss =  torch.Tensor(data['dw_klS_loss'])
+
         poe_acc = torch.Tensor(data['poe_acc'])
         inf_acc = torch.Tensor(data['inf_acc'])
+
 
         recons = torch.stack(
             [recon_both.detach(), recon_A.detach(), recon_B.detach()], -1
@@ -1325,9 +1456,22 @@ class Solver(object):
             [cont_capacity_loss_infA.detach(), disc_capacity_loss_infA.detach(), cont_capacity_loss_infB.detach(), disc_capacity_loss_infB.detach()], -1
         )
 
+        tc = torch.stack(
+            [tc_loss.detach()], -1
+        )
+
+        mi = torch.stack(
+            [mi_loss.detach(), miS_loss.detach()], -1
+        )
+
+        dw_kl = torch.stack(
+            [dw_kl_loss.detach(), dw_klS_loss.detach()], -1
+        )
+
         acc = torch.stack(
             [poe_acc.detach(), inf_acc.detach()], -1
         )
+
 
         self.viz.line(
             X=iters, Y=recons, env=self.name + '/lines',
@@ -1346,8 +1490,29 @@ class Solver(object):
         self.viz.line(
             X=iters, Y=each_capa, env=self.name + '/lines',
             win=self.win_id['capa'], update='append',
-            opts=dict(xlabel='iter', ylabel='logalpha',
+            opts=dict(xlabel='iter', ylabel='capacity loss',
                       title='Capacity loss', legend=['cont_capaA', 'disc_capaA', 'cont_capaB', 'disc_capaB']),
+        )
+
+        self.viz.line(
+            X=iters, Y=tc, env=self.name + '/lines',
+            win=self.win_id['tc'], update='append',
+            opts=dict(xlabel='iter', ylabel='loss',
+                      title='tc', legend=['tc']),
+        )
+
+        self.viz.line(
+            X=iters, Y=mi, env=self.name + '/lines',
+            win=self.win_id['mi'], update='append',
+            opts=dict(xlabel='iter', ylabel='loss',
+                      title='mi', legend=['mi', 'miS']),
+        )
+
+        self.viz.line(
+            X=iters, Y=dw_kl, env=self.name + '/lines',
+            win=self.win_id['dw_kl'], update='append',
+            opts=dict(xlabel='iter', ylabel='loss',
+                      title='dw_kl', legend=['dw_kl', 'dw_klS']),
         )
 
         self.viz.line(
