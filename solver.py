@@ -202,7 +202,7 @@ class Solver(object):
             # ============================================
 
             # sample a mini-batch
-            XA, XB, index = next(iterator1)  # (n x C x H x W)
+            XA, XB, label, index = next(iterator1)  # (n x C x H x W)
 
             index = index.cpu().detach().numpy()
             if self.use_cuda:
@@ -338,10 +338,10 @@ class Solver(object):
                 z_A, z_B, z_S = self.get_stat()
 
                 print(">>>>>> Train ACC")
-                (_, _) = self.acc_total(z_A, z_B, train=True, howmany=3)
+                (_, _) = self.acc_total(True)
 
                 print(">>>>>> Test ACC")
-                (poe_acc, inf_acc) = self.acc_total(z_A, z_B, train=False, howmany=3)
+                (poe_acc, inf_acc) = self.acc_total(False)
 
                 self.line_gather.insert(iter=iteration,
                                         recon_both=loss_recon_POE.item(),
@@ -1204,7 +1204,7 @@ class Solver(object):
         self.set_mode(train=True)
 
     ####
-    def acc_total(self, z_A_stat, z_B_stat, train=True, howmany=3):
+    def acc_total(self, train):
 
         self.set_mode(train=False)
 
