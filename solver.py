@@ -335,8 +335,6 @@ class Solver(object):
 
             # (visdom) insert current line stats
             if self.viz_on and (iteration % self.viz_ll_iter == 0):
-                z_A, z_B, z_S = self.get_stat()
-
                 print(">>>>>> Train ACC")
                 (_, _) = self.acc_total(True)
 
