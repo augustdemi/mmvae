@@ -72,13 +72,15 @@ class Solver(object):
         self.viz_on = args.viz_on
         if self.viz_on:
             self.win_id = dict(
-                recon='win_recon', kl='win_kl', capa='win_capa', tc='win_tc', mi='win_mi', dw_kl='win_dw_kl'
+                recon='win_recon', kl='win_kl', capa='win_capa', tc='win_tc', mi='win_mi', dw_kl='win_dw_kl', acc='win_acc'
             )
             self.line_gather = DataGather(
                 'iter', 'recon_both', 'recon_A', 'recon_B',
                 'kl_A', 'kl_B',
                 'cont_capacity_loss_infA', 'disc_capacity_loss_infA', 'cont_capacity_loss_infB', 'disc_capacity_loss_infB',
-                'tc_loss', 'mi_loss', 'dw_kl_loss', 'miS_loss', 'dw_klS_loss'
+                'tc_loss', 'mi_loss', 'dw_kl_loss', 'miS_loss', 'dw_klS_loss',
+                'poeA_acc', 'infA_acc',
+                'poeB_acc', 'infB_acc'
             )
 
             # if self.eval_metrics:
@@ -415,6 +417,14 @@ class Solver(object):
 
             # (visdom) insert current line stats
             if self.viz_on and (iteration % self.viz_ll_iter == 0):
+                z_A, z_B, z_S = self.get_stat()
+
+                print(">>>>>> Train ACC")
+                (poeA_acc, poeB_acc, infA_acc, infB_acc) = self.acc_total(z_A, z_B, train=True, howmany=3)
+
+                print(">>>>>> Test ACC")
+                (poeA_acc, poeB_acc, infA_acc, infB_acc) = self.acc_total(z_A, z_B, train=False, howmany=3)
+
                 self.line_gather.insert(iter=iteration,
                                         recon_both=loss_recon_POE.item(),
                                         recon_A=loss_recon_infA.item(),
@@ -429,7 +439,11 @@ class Solver(object):
                                         mi_loss = mi_loss.item(),
                                         dw_kl_loss = dw_kl_loss.item(),
                                         miS_loss=miS_loss.item(),
-                                        dw_klS_loss=dw_klS_loss.item()
+                                        dw_klS_loss=dw_klS_loss.item(),
+                                        poeA_acc=poeA_acc,
+                                        poeB_acc=poeB_acc,
+                                        infA_acc=infA_acc,
+                                        infB_acc=infB_acc
                                         )
 
             # (visdom) visualize line stats (then flush out)
@@ -805,21 +819,6 @@ class Solver(object):
         # reconstructed samples (given single modal observation)
         XA_infA_recon = torch.sigmoid(self.decoderA(ZA_infA, ZS_infA))
         XB_infB_recon = torch.sigmoid(self.decoderB(ZB_infB, ZS_infB))
-
-        print('=========== Reconstructed ACC  ============')
-        if self.dataset == 'modalA':
-            print('PoeA')
-            poeA_acc = self.check_acc(XA_POE_recon, label, train=train)
-            print('InfA')
-            infA_acc = self.check_acc(XA_infA_recon, label, train=train)
-        elif self.dataset == 'modalB':
-            print('PoeB')
-            poeB_acc = self.check_acc(XB_POE_recon, label, dataset='fmnist', train=train)
-            print('InfB')
-            infB_acc = self.check_acc(XB_infB_recon, label, dataset='fmnist', train=train)
-
-
-
 
         #######################
 
@@ -1326,6 +1325,89 @@ class Solver(object):
 
         self.set_mode(train=True)
 
+
+
+    def acc_total(self, z_A_stat, z_B_stat, train=True, howmany=3):
+
+        self.set_mode(train=False)
+
+        if train:
+            data_loader = self.data_loader
+            fixed_idxs = [3246, 7001, 14308, 19000, 27447, 33103, 38002, 45232, 51000, 55125]
+        else:
+            data_loader = self.test_data_loader
+            fixed_idxs = [2, 982, 2300, 3400, 4500, 5500, 6500, 7500, 8500, 9500]
+
+        # increase into 20 times more data
+        fixed_idxs200 = []
+        for i in range(10):
+            for j in range(20):
+                fixed_idxs200.append(fixed_idxs[i] + i)
+        fixed_XA = [0] * len(fixed_idxs200)
+        fixed_XB = [0] * len(fixed_idxs200)
+        label = [0] * len(fixed_idxs200)
+
+        for i, idx in enumerate(fixed_idxs200):
+            fixed_XA[i], fixed_XB[i], label[i] = \
+                data_loader.dataset.__getitem__(idx)[0:3]
+            if self.use_cuda:
+                fixed_XA[i] = fixed_XA[i].cuda()
+                fixed_XB[i] = fixed_XB[i].cuda()
+
+        # check if each digit was selected.
+        cnt = [0] * 10
+        for l in label:
+            cnt[l] += 1
+        print('cnt of digit:')
+        print(cnt)
+
+        fixed_XA = torch.stack(fixed_XA)
+        fixed_XB = torch.stack(fixed_XB)
+        label = torch.LongTensor(label)
+
+        muA_infA, stdA_infA, logvarA_infA, cate_prob_infA = self.encoderA(fixed_XA)
+        muB_infB, stdB_infB, logvarB_infB, cate_prob_infB = self.encoderB(fixed_XB)
+
+        ################### ACC for reconstructed img
+
+        # zS = encAB(xA,xB) via POE
+        cate_prob_POE = torch.tensor(1 / 10) * cate_prob_infA * cate_prob_infB
+
+        # encoder samples (for training)
+        ZA_infA = sample_gaussian(self.use_cuda, muA_infA, stdA_infA)
+        ZB_infB = sample_gaussian(self.use_cuda, muB_infB, stdB_infB)
+        ZS_POE = sample_gumbel_softmax(self.use_cuda, cate_prob_POE, train=False)
+
+        # encoder samples (for cross-modal prediction)
+        ZS_infA = sample_gumbel_softmax(self.use_cuda, cate_prob_infA, train=False)
+        ZS_infB = sample_gumbel_softmax(self.use_cuda, cate_prob_infB, train=False)
+        if self.use_cuda:
+            ZS_infA = ZS_infA.cuda()
+            ZS_infB = ZS_infB.cuda()
+
+        # reconstructed samples (given joint modal observation)
+        XA_POE_recon = torch.sigmoid(self.decoderA(ZA_infA, ZS_POE))
+        XB_POE_recon = torch.sigmoid(self.decoderB(ZB_infB, ZS_POE))
+
+        # reconstructed samples (given single modal observation)
+        XA_infA_recon = torch.sigmoid(self.decoderA(ZA_infA, ZS_infA))
+        XB_infB_recon = torch.sigmoid(self.decoderB(ZB_infB, ZS_infB))
+
+        print('=========== Reconstructed ACC  ============')
+        if self.dataset == 'modalA':
+            print('PoeA')
+            poeA_acc = self.check_acc(XA_POE_recon, label, train=train)
+            print('InfA')
+            infA_acc = self.check_acc(XA_infA_recon, label, train=train)
+        elif self.dataset == 'modalB':
+            print('PoeB')
+            poeB_acc = self.check_acc(XB_POE_recon, label, dataset='fmnist', train=train)
+            print('InfB')
+            infB_acc = self.check_acc(XB_infB_recon, label, dataset='fmnist', train=train)
+
+        self.set_mode(train=True)
+        return (poeA_acc, poeB_acc, infA_acc, infB_acc)
+
     ####
     def viz_init(self):
 
@@ -1335,6 +1417,7 @@ class Solver(object):
         self.viz.close(env=self.name + '/lines', win=self.win_id['tc'])
         self.viz.close(env=self.name + '/lines', win=self.win_id['mi'])
         self.viz.close(env=self.name + '/lines', win=self.win_id['dw_kl'])
+        self.viz.close(env=self.name + '/lines', win=self.win_id['acc'])
 
         # if self.eval_metrics:
         #     self.viz.close(env=self.name+'/lines', win=self.win_id['metrics'])
@@ -1362,6 +1445,12 @@ class Solver(object):
         miS_loss =  torch.Tensor(data['miS_loss'])
         dw_klS_loss =  torch.Tensor(data['dw_klS_loss'])
 
+        poeA_acc = torch.Tensor(data['poeA_acc'])
+        infA_acc = torch.Tensor(data['infA_acc'])
+        poeB_acc = torch.Tensor(data['poeB_acc'])
+        infB_acc = torch.Tensor(data['infB_acc'])
+
+
         recons = torch.stack(
             [recon_both.detach(), recon_A.detach(), recon_B.detach()], -1
         )
@@ -1385,6 +1474,9 @@ class Solver(object):
             [dw_kl_loss.detach(), dw_klS_loss.detach()], -1
         )
 
+        acc = torch.stack(
+            [poeA_acc.detach(), infA_acc.detach(), synA_acc.detach(), poeB_acc.detach(), infB_acc.detach(), synB_acc.detach()], -1
+        )
 
 
         self.viz.line(
@@ -1429,6 +1521,12 @@ class Solver(object):
                       title='dw_kl', legend=['dw_kl', 'dw_klS']),
         )
 
+        self.viz.line(
+            X=iters, Y=acc, env=self.name + '/lines',
+            win=self.win_id['acc'], update='append',
+            opts=dict(xlabel='iter', ylabel='accuracy',
+            title = 'Classification Acc', legend = ['poeA_acc', 'infA_acc', 'synA_acc', 'poeB_acc', 'infB_acc', 'synB_acc']),
+        )
 
     ####
     def visualize_line_metrics(self, iters, metric1, metric2):
