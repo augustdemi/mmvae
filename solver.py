@@ -185,7 +185,7 @@ class Solver(object):
         # iterators from dataloader
         iterator1 = iter(self.data_loader)
 
-        iter_per_epoch = iterator1
+        iter_per_epoch = len(iterator1)
 
         start_iter = self.ckpt_load_iter + 1
         epoch = int(start_iter / iter_per_epoch)
