@@ -747,8 +747,8 @@ class Solver(object):
         merged = merged[perm, :].cpu()
 
         # save the results as image
-        fname = os.path.join(self.output_dir_recon, 'reconA_%s.jpg' % iters)
-        mkdirs(self.output_dir_recon)
+        fname = os.path.join(out_dir, 'reconA_%s.jpg' % iters)
+        mkdirs(out_dir)
         save_image(
             tensor=merged, filename=fname, nrow=4 * int(np.sqrt(n)),
             pad_value=1
@@ -769,7 +769,7 @@ class Solver(object):
         merged = merged[perm, :].cpu()
 
         # save the results as image
-        fname = os.path.join(out_dir, 'reconA_%s.jpg' % iters)
+        fname = os.path.join(out_dir, 'reconB_%s.jpg' % iters)
         mkdirs(out_dir)
         save_image(
             tensor=merged, filename=fname, nrow=4 * int(np.sqrt(n)),
@@ -1120,10 +1120,12 @@ class Solver(object):
         print('interpolationS: ', np.min(np.array(z_S)), np.max(np.array(z_S)))
 
         if train:
+            print('traverse train')
             data_loader = self.data_loader
             fixed_idxs = [3246, 7001, 14308, 19000, 27447, 33103, 38002, 45232, 51000, 55125]
             out_dir = os.path.join(self.output_dir_trvsl, str(iters), 'train')
         else:
+            print('traverse test')
             data_loader = self.test_data_loader
             fixed_idxs = [2, 982, 2300, 3400, 4500, 5500, 6500, 7500, 8500, 9500]
             out_dir = os.path.join(self.output_dir_trvsl, str(iters), 'test')
