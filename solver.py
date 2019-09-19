@@ -678,6 +678,7 @@ class Solver(object):
         if train:
             data_loader = self.data_loader
             fixed_idxs = [3246, 7001, 14308, 19000, 27447, 33103, 38002, 45232, 51000, 55125]
+            out_dir = os.path.join(self.output_dir_recon, 'train')
         else:
             data_loader = self.test_data_loader
             fixed_idxs = [2, 982, 2300, 3400, 4500, 5500, 6500, 7500, 8500, 9500]
