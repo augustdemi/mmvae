@@ -866,7 +866,7 @@ class Solver(object):
         merged = merged[perm, :].cpu()
 
         # save the results as image
-        fname = os.path.join(out_dir, 'reconA_%s.jpg' % iters)
+        fname = os.path.join(out_dir, 'reconB_%s.jpg' % iters)
         mkdirs(out_dir)
         save_image(
             tensor=merged, filename=fname, nrow=4 * int(np.sqrt(n)),
