@@ -221,10 +221,16 @@ class Solver(object):
 
             # read current values
 
-            # zS = encAB(xA,xB) via POE
+            '''
+            POE: should be the paramter for the distribution
+            induce zS = encAB(xA,xB) via POE, that is,
+                q(zA,zB,zS | xA,xB) := qI(zA|xA) * qT(zB|xB) * q(zS|xA,xB)
+                    where q(zS|xA,xB) \propto p(zS) * qI(zS|xA) * qT(zS|xB)
+            '''
             cate_prob_POE = torch.tensor(1 / 10) * cate_prob_infA * cate_prob_infB
 
 
+            ######################################## just for capacity(not used) ########################################
             # kl losses
             #A
             latent_dist_infA = {'cont': (muA_infA, logvarA_infA), 'disc': [cate_prob_infA]}
@@ -241,30 +247,29 @@ class Solver(object):
 
             loss_kl_infB = kl_cont_loss_infB + kl_disc_loss_infB
             capacity_loss_infB = cont_capacity_loss_infB + disc_capacity_loss_infB
-
+            ########################################################################################################################
 
             # encoder samples (for training)
             ZA_infA = sample_gaussian(self.use_cuda, muA_infA, stdA_infA)
             ZB_infB = sample_gaussian(self.use_cuda, muB_infB, stdB_infB)
+            # For one modality, ZS_POE is not used to train the model, which means we don't need the distribution
+            ZS_POE = sample_gumbel_softmax(self.use_cuda, cate_prob_POE)
+
+            # for ZS_infA or B, they need the distribution class to caculate the pmf value in decompositon of KL
             Eps = 1e-12
+            # distribution
             relaxedCategA = ExpRelaxedCategorical(torch.tensor(.67), logits=torch.log(cate_prob_infA + Eps))
             relaxedCategB = ExpRelaxedCategorical(torch.tensor(.67), logits=torch.log(cate_prob_infB + Eps))
-
-
-
-
-            # encoder samples (for cross-modal prediction)
+            # sampling
+            log_ZS_infA = relaxedCategA.rsample()
+            ZS_infA = torch.exp(log_ZS_infA)
+            log_ZS_infB = relaxedCategB.rsample()
+            ZS_infB = torch.exp(log_ZS_infB)
+            # the above sampling of ZS_infA/B are same 'way' as below
             # ZS_infA = sample_gumbel_softmax(self.use_cuda, cate_prob_infA)
             # ZS_infB = sample_gumbel_softmax(self.use_cuda, cate_prob_infB)
 
 
-            log_ZS_infA = relaxedCategA.rsample()
-            ZS_infA = torch.exp(log_ZS_infA)
-
-            log_ZS_infB = relaxedCategB.rsample()
-            ZS_infB = torch.exp(log_ZS_infB)
-
-            ZS_POE = sample_gumbel_softmax(self.use_cuda, cate_prob_POE)
 
 
             #### For all cate_prob_infA(statiscts), total 64, get log_prob_ZS_infB2 for each of ZS_infB2(sample) ==> 64*64. marig. out for q_z for MI
