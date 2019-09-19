@@ -770,6 +770,7 @@ class Solver(object):
         if train:
             data_loader = self.data_loader
             fixed_idxs = [3246, 7001, 14308, 19000, 27447, 33103, 38002, 45232, 51000, 55125]
+            out_dir = os.path.join(self.output_dir_recon, 'train')
         else:
             data_loader = self.test_data_loader
             fixed_idxs = [2, 982, 2300, 3400, 4500, 5500, 6500, 7500, 8500, 9500]
@@ -865,8 +866,8 @@ class Solver(object):
         merged = merged[perm, :].cpu()
 
         # save the results as image
-        fname = os.path.join(self.output_dir_recon, 'reconB_%s.jpg' % iters)
-        mkdirs(self.output_dir_recon)
+        fname = os.path.join(out_dir, 'reconA_%s.jpg' % iters)
+        mkdirs(out_dir)
         save_image(
             tensor=merged, filename=fname, nrow=4 * int(np.sqrt(n)),
             pad_value=1
