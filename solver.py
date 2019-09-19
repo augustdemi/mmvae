@@ -1200,8 +1200,6 @@ class Solver(object):
 
 
         # save the generated files, also the animated gifs
-        out_dir = os.path.join(self.output_dir_trvsl, str(iters), 'train')
-        mkdirs(self.output_dir_trvsl)
         mkdirs(out_dir)
 
         for j, val in enumerate(interpolationA):
